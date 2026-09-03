@@ -1,0 +1,39 @@
+name: Temporary GoDaddy MCP Inspector check
+
+on:
+  push:
+    paths:
+      - 'tmp-godaddy-inspector-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check domains through GoDaddy public MCP
+        shell: bash
+        run: |
+          set -o pipefail
+          npx -y @modelcontextprotocol/inspector@latest --cli \
+            https://api.godaddy.com/v1/domains/mcp \
+            --transport http --method tools/list --format json \
+            > tmp-godaddy-tools.json
+          npx -y @modelcontextprotocol/inspector@latest --cli \
+            https://api.godaddy.com/v1/domains/mcp \
+            --transport http --method tools/call \
+            --tool-name domains_check_availability \
+            --tool-arg 'domains=outingpick.com, goodouting.com, dayoutgo.com, godayout.com, plandayout.com, pickdayout.com, tryanddo.com, sidetripgo.com' \
+            --format json > tmp-godaddy-inspector-results.json
+          cat tmp-godaddy-inspector-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmp-godaddy-inspector-results
+          path: |
+            tmp-godaddy-tools.json
+            tmp-godaddy-inspector-results.json
+          retention-days: 1
