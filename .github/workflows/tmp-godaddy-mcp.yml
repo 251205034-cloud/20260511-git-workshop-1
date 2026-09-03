@@ -1,0 +1,74 @@
+name: Temporary GoDaddy public MCP domain check
+
+on:
+  push:
+    paths:
+      - 'tmp-godaddy-mcp-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Call GoDaddy public MCP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+
+          url='https://api.godaddy.com/v1/domains/mcp'
+          accept='application/json, text/event-stream'
+          session=None
+
+          def extract(body):
+              text=body.decode('utf-8','replace')
+              payloads=[]
+              for line in text.splitlines():
+                  if line.startswith('data:'):
+                      s=line[5:].strip()
+                      try: payloads.append(json.loads(s))
+                      except Exception: pass
+              if payloads: return payloads[-1], text
+              try: return json.loads(text), text
+              except Exception: return {'raw':text}, text
+
+          def post(payload, require_session=False):
+              global session
+              headers={'Content-Type':'application/json','Accept':accept,'User-Agent':'OwL35-domain-check/1.0'}
+              if session: headers['Mcp-Session-Id']=session
+              req=urllib.request.Request(url,data=json.dumps(payload).encode(),headers=headers,method='POST')
+              try:
+                  with urllib.request.urlopen(req,timeout=60) as r:
+                      session=session or r.headers.get('Mcp-Session-Id')
+                      data,text=extract(r.read())
+                      return {'http':r.status,'session':session,'data':data,'raw':text}
+              except urllib.error.HTTPError as e:
+                  body=e.read(); data,text=extract(body)
+                  return {'http':e.code,'session':session,'data':data,'raw':text,'headers':dict(e.headers)}
+
+          init=post({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'OwL35-domain-check','version':'1.0'}}})
+          print('INIT',json.dumps(init,ensure_ascii=False),flush=True)
+          initialized=post({'jsonrpc':'2.0','method':'notifications/initialized','params':{}})
+          print('INITIALIZED',json.dumps(initialized,ensure_ascii=False),flush=True)
+          tools=post({'jsonrpc':'2.0','id':2,'method':'tools/list','params':{}})
+          print('TOOLS',json.dumps(tools,ensure_ascii=False),flush=True)
+          names=[]
+          try: names=[x.get('name') for x in tools['data']['result']['tools']]
+          except Exception: pass
+          tool='domains_check_availability' if 'domains_check_availability' in names else (names[0] if names else 'domains_check_availability')
+          domains='outingpick.com, goodouting.com, dayoutgo.com, godayout.com, plandayout.com, pickdayout.com, tryanddo.com, sidetripgo.com'
+          call=post({'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':tool,'arguments':{'domains':domains}}})
+          print('CALL',json.dumps(call,ensure_ascii=False),flush=True)
+          with open('tmp-godaddy-mcp-results.json','w',encoding='utf-8') as f:
+              json.dump({'initialize':init,'tools':tools,'call':call},f,ensure_ascii=False,indent=2)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmp-godaddy-mcp-results
+          path: tmp-godaddy-mcp-results.json
+          retention-days: 1
